@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setpoint Control</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/1.2.1/chartjs-plugin-zoom.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .graph-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+            margin-top: 20px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        .button-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .zoom-button {
+            flex: 1;
+        }
+        .transient-analysis {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .transient-analysis h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 8px;
+        }
+        .analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        .analysis-item {
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #4CAF50;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .analysis-item:hover {
+            background-color: #f0f0f0;
+        }
+        .analysis-item.active {
+            background-color: #e0f7e0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .analysis-item h4 {
+            margin: 0 0 5px 0;
+            color: #555;
+        }
+        .analysis-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        .marker-tooltip {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            white-space: nowrap;
+        }
+        .highlight-marker {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { r: 4; opacity: 0.7; }
+            50% { r: 8; opacity: 1; }
+            100% { r: 4; opacity: 0.7; }
+        }
+        .legend-container {
+            display: flex;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding: 5px;
+            gap: 15px;
+            align-items: center;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 4px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-right: 15px;
+        }
+        .legend-color {
+            width: 15px;
+            height: 3px;
+            margin-right: 5px;
+        }
+        .legend-label {
+            font-size: 11px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Setpoint Control Panel</h2>
+        
+        <div id="setpointForm">
+            <div class="form-group">
+                <label for="setpoint">Setpoint (degrees):</label>
+                <input type="number" id="setpoint" placeholder="Enter setpoint value" required>
+            </div>
+            <button onclick="sendSetpoint()">Send Setpoint</button>
+        </div>
+        <div>
+            <p>Encryption used: RSA</p>
+        </div>
+
+        <div id="status"></div>
+
+        <div class="graph-container">
+            <canvas id="motorGraph"></canvas>
+            <div class="marker-tooltip" id="markerTooltip"></div>
+            <div class="legend-container" id="analysisLegend" style="display: none;"></div>
+        </div>
+        
+        <div class="button-container">
+            <button class="zoom-button" onclick="resetZoom()">Reset Zoom</button>
+            <button class="zoom-button" onclick="calculateTransient()">Analyze Transient Response</button>
+            <button class="zoom-button" onclick="toggleAnalysisMarkers()">Toggle Analysis Markers</button>
+        </div>
+        
+        <div class="transient-analysis" id="transientAnalysis" style="display: none;">
+            <h3>Transient Response Analysis</h3>
+            <div class="analysis-grid">
+                <div class="analysis-item" id="delayTimeItem" onclick="highlightMarker('delay')">
+                    <h4>Delay Time (s)</h4>
+                    <div id="delayTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item" id="riseTimeItem" onclick="highlightMarker('rise')">
+                    <h4>Rise Time (s)</h4>
+                    <div id="riseTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item" id="peakTimeItem" onclick="highlightMarker('peak')">
+                    <h4>Peak Time (s)</h4>
+                    <div id="peakTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item" id="settlingTimeItem" onclick="highlightMarker('settling')">
+                    <h4>Settling Time (s)</h4>
+                    <div id="settlingTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item" id="maxOvershootItem" onclick="highlightMarker('overshoot')">
+                    <h4>Maximum Overshoot (%)</h4>
+                    <div id="maxOvershoot" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item" id="steadyStateErrorItem" onclick="highlightMarker('steady')">
+                    <h4>Steady State Error</h4>
+                    <div id="steadyStateError" class="analysis-value">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let chart;
+        let startTime;
+        let responseStartTime = null;
+        let currentSetpoint = 0;
+        let reachedSetpoint = false;
+        let setpointReachedTime = null;
+        const maxDataPoints = 1000;  
+        
+        // Data storage for transient analysis
+        let timeData = [];
+        let positionData = [];
+        let setpointData = [];
+        let setpointChangedTime = null;
+        
+        // Markers for the chart
+        let analysisMarkers = {
+            visible: false,
+            activeMarker: null,
+            markerPoints: []
+        };
+        
+        // Analysis results storage
+        let analysisResults = {
+            delayTime: 0,
+            riseTimeStart: 0,
+            riseTimeEnd: 0,
+            peakTime: 0,
+            peakValue: 0,
+            settlingTime: 0,
+            maxOvershoot: 0,
+            steadyStateValue: 0,
+            hasOvershoot: false
+        };
+        function initChart() {
+            const ctx = document.getElementById('motorGraph').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Actual Position',
+                            data: [],
+                            borderColor: 'rgb(75, 192, 192)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: false,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Setpoint',
+                            data: [],
+                            borderColor: 'rgb(255, 99, 132)',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            tension: 0,
+                            fill: false,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Time (seconds)',
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    // Display in seconds with 3 decimal places
+                                    return (value / 1000).toFixed(3);
+                                }
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Position (degrees)',
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        }
+                    },
+                    animation: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20,
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += context.parsed.y.toFixed(3) + '°';
+                                    return label;
+                                },
+                                title: function(tooltipItems) {
+                                    // Convert to seconds with 3 decimal places
+                                    return (tooltipItems[0].parsed.x / 1000).toFixed(3) + ' s';
+                                }
+                            }
+                        },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'xy'
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                mode: 'xy',
+                            }
+                        }
+                    },
+                    onClick: handleChartClick,
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+            addData(0, 0, 0);
+        }
+
+        function resetZoom() {
+            chart.resetZoom();
+        }
+
+        function updateChartScale(setpoint) {
+            const maxY = Math.max(setpoint * 2, 360);
+            const minY = -10;
+            
+            chart.options.scales.y.max = maxY;
+            chart.options.scales.y.min = minY;
+            chart.update('none');
+        }
+
+        function addData(time, actualPosition, targetPosition) {
+            // Store data for transient analysis with interpolation to fix timestamp issues
+            if (timeData.length > 0) {
+                // Ensure time is monotonically increasing and not too fast
+                const lastTime = timeData[timeData.length - 1];
+                // If time jumped too much, interpolate the data points
+                if (time - lastTime > 100) { // More than 100ms gap
+                    const steps = Math.ceil((time - lastTime) / 50); // Create a point every 50ms
+                    for (let i = 1; i < steps; i++) {
+                        const interpTime = lastTime + (time - lastTime) * (i / steps);
+                        const interpPosition = positionData[positionData.length - 1] + 
+                            (actualPosition - positionData[positionData.length - 1]) * (i / steps);
+                        
+                        timeData.push(interpTime);
+                        positionData.push(interpPosition);
+                        setpointData.push(targetPosition);
+                        
+                        chart.data.labels.push(interpTime);
+                        chart.data.datasets[0].data.push(interpPosition);
+                        chart.data.datasets[1].data.push(targetPosition);
+                    }
+                }
+            }
+            
+            timeData.push(time);
+            positionData.push(actualPosition);
+            setpointData.push(targetPosition);
+            
+            // First response detection - for delay time calculation
+            if (setpointChangedTime !== null && responseStartTime === null) {
+                const deadband = 0.2; // degrees
+                if (Math.abs(actualPosition - positionData[0]) > deadband) {
+                    responseStartTime = time;
+                }
+            }
+            
+            if (!reachedSetpoint) {
+                const error = Math.abs(actualPosition - targetPosition);
+                if (error < 0.5) {
+                    reachedSetpoint = true;
+                    setpointReachedTime = time;
+                }
+            }
+
+            chart.data.labels.push(time);
+            chart.data.datasets[0].data.push(actualPosition);
+            chart.data.datasets[1].data.push(targetPosition);
+
+            if (chart.data.labels.length > maxDataPoints) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+                chart.data.datasets[1].data.shift();
+            }
+
+            chart.update('none');
+
+            if (reachedSetpoint && (time - setpointReachedTime) >= 2000) {
+                showStatus('Target reached and stabilized', 'success');
+                // Auto-analyze when stable
+                calculateTransient();
+            }
+        }
+        function connectWebSocket() {
+            ws = new WebSocket('ws://localhost:8765');
+            
+            ws.onopen = () => {
+                showStatus('Connected to server', 'success');
+                startTime = performance.now();
+                reachedSetpoint = false;
+                setpointReachedTime = null;
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const currentAngle = parseFloat(event.data) * 180 / Math.PI;
+                    const elapsedTime = performance.now() - startTime;
+                    addData(elapsedTime, currentAngle, currentSetpoint);
+                } catch (error) {
+                    console.error('Error processing data:', error);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                showStatus('Connection error! Please refresh the page.', 'error');
+            };
+            
+            ws.onclose = () => {
+                if (!reachedSetpoint) {
+                    showStatus('Connection lost. Reconnecting...', 'error');
+                    setTimeout(connectWebSocket, 3000);
+                }
+            };
+        }
+        
+        function sendSetpoint() {
+            const setpoint = parseFloat(document.getElementById('setpoint').value);
+            if (!isNaN(setpoint) && ws && ws.readyState === WebSocket.OPEN) {
+                // Reset response tracking
+                responseStartTime = null;
+                setpointChangedTime = performance.now() - startTime;
+                
+                // Reset data arrays for new transient analysis
+                timeData = [];
+                positionData = [];
+                setpointData = [];
+                
+                // Hide previous analysis results
+                document.getElementById('transientAnalysis').style.display = 'none';
+                document.getElementById('analysisLegend').style.display = 'none';
+                
+                // Remove analysis markers
+                removeAnalysisMarkers();
+                
+                currentSetpoint = setpoint;
+                updateChartScale(setpoint);
+                ws.send(setpoint.toString());
+                showStatus('Setpoint sent successfully!', 'success');
+                
+                setTimeout(() => {
+                    document.getElementById('status').style.display = 'none';
+                }, 2000);
+            } else {
+                showStatus('Unable to send setpoint. Please check connection.', 'error');
+            }
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+            statusDiv.style.display = 'block';
+        }
+        
+        // Function to find steady state value
+        function findSteadyStateValue(positionData, targetValue) {
+            // Take the average of last 10% of data points as steady state
+            const numPoints = Math.max(5, Math.floor(positionData.length * 0.1));
+            const endSlice = positionData.slice(-numPoints);
+            return endSlice.reduce((sum, val) => sum + val, 0) / endSlice.length;
+        }
+        
+        // Function to calculate delay time (time to reach 50% of final value)
+        function calculateDelayTime(timeData, positionData, initialValue, targetValue, steadyStateValue) {
+    // Gunakan 0 sebagai referensi awal, terlepas dari initialValue aktual
+            const halfwayValue = 0 + 0.5 * (steadyStateValue - 0);
+    
+            for (let i = 0; i < positionData.length; i++) {
+                if ((steadyStateValue > 0 && positionData[i] >= halfwayValue) ||
+                    (steadyStateValue < 0 && positionData[i] <= halfwayValue)) {
+                 return timeData[i];
+                    }
+            }  
+            return 0;
+        }
+        
+        // Function to calculate rise time (time from 10% to 90% of final value)
+        function calculateRiseTime(timeData, positionData, initialValue, steadyStateValue) {
+            const range = steadyStateValue - initialValue;
+            const tenPercent = initialValue + 0.1 * range;
+            const ninetyPercent = initialValue + 0.9 * range;
+            
+            let startIndex = -1;
+            let endIndex = -1;
+            
+            // Find 10% and 90% points
+            for (let i = 0; i < positionData.length; i++) {
+                if (startIndex === -1 && 
+                    ((range > 0 && positionData[i] >= tenPercent) || 
+                     (range < 0 && positionData[i] <= tenPercent))) {
+                    startIndex = i;
+                }
+                
+                if (startIndex !== -1 && endIndex === -1 && 
+                    ((range > 0 && positionData[i] >= ninetyPercent) || 
+                     (range < 0 && positionData[i] <= ninetyPercent))) {
+                    endIndex = i;
+                    break;
+                }
+            }
+            
+            // If not found, return defaults
+            if (startIndex === -1 || endIndex === -1) {
+                return { startTime: 0, endTime: 0, riseTime: 0 };
+            }
+            
+            const startTime = timeData[startIndex];
+            const endTime = timeData[endIndex];
+            
+            return {
+                startTime: startTime,
+                endTime: endTime,
+                riseTime: endTime - startTime
+            };
+        }
+        
+        // Function to find peak value (for peak time and overshoot calculations)
+        function findPeakValue(timeData, positionData, targetValue, steadyStateValue, initialValue) {
+            let peakValue = steadyStateValue;  // Initialize to steady state
+            let peakIndex = -1;  // Initialize to invalid index
+            let foundInitialCrossing = false;
+            let hasOvershoot = false;
+            
+            // First, find when the response first crosses the steady-state value
+            for (let i = 0; i < positionData.length; i++) {
+                if (!foundInitialCrossing) {
+                    if ((initialValue < steadyStateValue && positionData[i] >= steadyStateValue) ||
+                        (initialValue > steadyStateValue && positionData[i] <= steadyStateValue)) {
+                        foundInitialCrossing = true;
+                    }
+                    continue; // Skip until we cross the steady state value
+                }
+                
+                // After crossing steady state, look for peak that exceeds steady state (overshoot)
+                const deviation = positionData[i] - steadyStateValue;
+                const isOvershoot = (initialValue < steadyStateValue && deviation > 0) || 
+                                   (initialValue > steadyStateValue && deviation < 0);
+                
+                if (isOvershoot) {
+                    hasOvershoot = true;
+                    const absDeviation = Math.abs(deviation);
+                    const absPeakDeviation = Math.abs(peakValue - steadyStateValue);
+                    
+                    if (absDeviation > absPeakDeviation) {
+                        peakValue = positionData[i];
+                        peakIndex = i;
+                    }
+                }
+                
+                // If we've found a peak and then started coming back toward steady state
+                // for a significant amount of time/points, we can stop looking
+                if (peakIndex !== -1 && i > peakIndex + 10 && 
+                    Math.abs(positionData[i] - steadyStateValue) < 0.5 * Math.abs(peakValue - steadyStateValue)) {
+                    break;
+                }
+            }
+            
+            return {
+                peakValue: peakValue,
+                peakTime: peakIndex !== -1 ? timeData[peakIndex] : 0,
+                peakIndex: peakIndex,
+                hasOvershoot: hasOvershoot
+            };
+        }
+        
+        // Function to calculate settling time (time to stay within 2% of final value)
+        function calculateSettlingTime(timeData, positionData, targetValue, steadyStateValue) {
+            const tolerance = 0.02; // 2% tolerance band
+            const toleranceBand = Math.abs(steadyStateValue - positionData[0]) * tolerance;
+            
+            // Find the time when the response enters and stays within the tolerance band
+            let settlingIndex = timeData.length - 1; // Default to last point
+            let consecutivePointsInBand = 0;
+            const requiredPointsInBand = 5; // Number of consecutive points required to consider it settled
+            
+            for (let i = 0; i < positionData.length; i++) {
+                if (Math.abs(positionData[i] - steadyStateValue) <= toleranceBand) {
+                    consecutivePointsInBand++;
+                    if (consecutivePointsInBand >= requiredPointsInBand) {
+                        settlingIndex = i - (requiredPointsInBand - 1);
+                        break;
+                    }
+                } else {
+                    consecutivePointsInBand = 0;
+                }
+            }
+            
+            return timeData[settlingIndex];
+        }
+        
+        // Function to calculate maximum overshoot percentage
+        function calculateMaxOvershoot(positionData, targetValue, initialValue, steadyStateValue) {
+            // Find when the response first crosses steady state
+            let crossIndex = -1;
+            for (let i = 0; i < positionData.length; i++) {
+                if ((initialValue < steadyStateValue && positionData[i] >= steadyStateValue) ||
+                    (initialValue > steadyStateValue && positionData[i] <= steadyStateValue)) {
+                    crossIndex = i;
+                    break;
+                }
+            }
+            
+            if (crossIndex === -1) return 0; // Never crosses steady state
+            
+            // Find maximum deviation after crossing
+            let maxDeviation = 0;
+            for (let i = crossIndex; i < positionData.length; i++) {
+                const deviation = Math.abs(positionData[i] - steadyStateValue);
+                if (deviation > maxDeviation) {
+                    maxDeviation = deviation;
+                }
+            }
+            
+            // Calculate percentage overshoot relative to step size
+            const stepSize = Math.abs(steadyStateValue - initialValue);
+            if (stepSize > 0) {
+                return (maxDeviation / stepSize) * 100;
+            }
+            return 0;
+        }
+        
+        function calculateTransient() {
+            if (timeData.length < 5 || positionData.length < 5) {
+                showStatus('Not enough data for analysis', 'error');
+                return;
+            }
+            
+            const targetValue = currentSetpoint;
+            const initialValue = positionData[0];
+            
+            // Find the final steady-state value
+            const steadyStateValue = findSteadyStateValue(positionData, targetValue);
+            analysisResults.steadyStateValue = steadyStateValue;
+            
+            // Calculate metrics
+            const delayTime = calculateDelayTime(timeData, positionData, initialValue, targetValue, steadyStateValue);
+            analysisResults.delayTime = delayTime;
+            
+            const riseTimeValues = calculateRiseTime(timeData, positionData, initialValue, steadyStateValue);
+            analysisResults.riseTimeStart = riseTimeValues.startTime;
+            analysisResults.riseTimeEnd = riseTimeValues.endTime;
+            
+            const peakInfo = findPeakValue(timeData, positionData, targetValue, steadyStateValue, initialValue);
+            analysisResults.peakTime = peakInfo.peakTime;
+            analysisResults.peakValue = peakInfo.peakValue;
+            analysisResults.hasOvershoot = peakInfo.hasOvershoot;
+            
+            const settlingTime = calculateSettlingTime(timeData, positionData, targetValue, steadyStateValue);
+            analysisResults.settlingTime = settlingTime;
+            
+            const maxOvershoot = calculateMaxOvershoot(positionData, targetValue, initialValue, steadyStateValue);
+            analysisResults.maxOvershoot = maxOvershoot;
+            
+            const steadyStateError = Math.abs(targetValue - steadyStateValue).toFixed(3);
+            
+            // Display results (convert ms to seconds with 3 decimal places)
+            document.getElementById('delayTime').textContent = (delayTime / 1000).toFixed(3) + ' s';
+            document.getElementById('riseTime').textContent = ((riseTimeValues.endTime - riseTimeValues.startTime) / 1000).toFixed(3) + ' s';
+            
+            // PERUBAHAN: Selalu tampilkan Peak Time, baik ada overshoot atau tidak
+            document.getElementById('peakTime').textContent = peakInfo.hasOvershoot && peakInfo.peakTime > 0 ? 
+                (peakInfo.peakTime / 1000).toFixed(3) + ' s' : 
+                '0.000 s';
+            
+            // PERUBAHAN: Selalu tampilkan elemen peakTimeItem
+            document.getElementById('peakTimeItem').style.display = 'block';
+            
+            document.getElementById('settlingTime').textContent = (settlingTime / 1000).toFixed(3) + ' s';
+            document.getElementById('maxOvershoot').textContent = maxOvershoot.toFixed(2) + '%';
+            document.getElementById('steadyStateError').textContent = steadyStateError + '°';
+            
+            // Show analysis container
+            document.getElementById('transientAnalysis').style.display = 'block';
+            
+            // Add markers to the chart
+            addAnalysisMarkers();
+            
+            // Update legend
+            updateAnalysisLegend();
+            document.getElementById('analysisLegend').style.display = 'flex';
+        }
+        
+        function addAnalysisMarkers() {
+            // Remove existing markers first
+            removeAnalysisMarkers();
+            
+            // Get chart limits for lines
+            const yMin = chart.scales.y.min || 0;
+            const yMax = chart.scales.y.max || 100;
+            const lastTime = timeData[timeData.length - 1] || 1000;
+            
+            // Create marker dataset if it doesn't exist
+            if (!chart.data.datasets.find(ds => ds.id === 'markers')) {
+                chart.data.datasets.push({
+                    id: 'markers',
+                    label: 'Analysis Points',
+                    data: [],
+                    backgroundColor: 'rgba(255, 99, 132, 0.7)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    pointStyle: 'circle',
+                    showLine: false
+                });
+            }
+            
+            // Get marker dataset index
+            const markerDatasetIndex = chart.data.datasets.findIndex(ds => ds.id === 'markers');
+            
+            // Clear previous markers
+            chart.data.datasets[markerDatasetIndex].data = [];
+            analysisMarkers.markerPoints = [];
+
+            // 1. Add Steady State Line (Always show this important reference)
+            chart.data.datasets.push({
+                id: 'steady-state-line',
+                label: 'Steady State',
+                data: [
+                    {x: 0, y: analysisResults.steadyStateValue},
+                    {x: lastTime, y: analysisResults.steadyStateValue}
+                ],
+                borderColor: 'rgba(0, 0, 128, 0.7)',
+                borderWidth: 1.5,
+                borderDash: [5, 5],
+                pointRadius: 0,
+                fill: false
+            });
+            
+            // 2. Add tolerance band for settling time
+            const tolerance = 0.02; // 2% tolerance band
+            const toleranceBand = Math.abs(analysisResults.steadyStateValue - positionData[0]) * tolerance;
+            
+            // Upper tolerance band
+            chart.data.datasets.push({
+                id: 'tolerance-upper',
+                label: 'Tolerance Band +2%',
+                data: [
+                    {x: 0, y: analysisResults.steadyStateValue + toleranceBand},
+                    {x: lastTime, y: analysisResults.steadyStateValue + toleranceBand}
+                ],
+                borderColor: 'rgba(173, 216, 230, 0.5)',
+                borderWidth: 1,
+                borderDash: [2, 2],
+                pointRadius: 0,
+                fill: false
+            });
+            
+            // Lower tolerance band
+            chart.data.datasets.push({
+                id: 'tolerance-lower',
+                label: 'Tolerance Band -2%',
+                data: [
+                    {x: 0, y: analysisResults.steadyStateValue - toleranceBand},
+                    {x: lastTime, y: analysisResults.steadyStateValue - toleranceBand}
+                ],
+                borderColor: 'rgba(173, 216, 230, 0.5)',
+                borderWidth: 1,
+                borderDash: [2, 2],
+                pointRadius: 0,
+                fill: false
+            });
+            
+            // Add delay time marker with vertical reference line
+            const delayTimeIndex = timeData.indexOf(analysisResults.delayTime);
+            if (delayTimeIndex >= 0) {
+                // Add marker point
+                const delayPoint = {
+                    x: analysisResults.delayTime,
+                    y: positionData[delayTimeIndex],
+                    markerType: 'delay',
+                    label: 'Delay Time (50%)',
+                    time: (analysisResults.delayTime / 1000).toFixed(3) + ' s',
+                    value: positionData[delayTimeIndex].toFixed(2) + '°'
+                };
+                chart.data.datasets[markerDatasetIndex].data.push(delayPoint);
+                analysisMarkers.markerPoints.push(delayPoint);
+                
+                // Add vertical reference line
+                chart.data.datasets.push({
+                    id: 'delay-line',
+                    label: 'Delay Time',
+                    data: [
+                        {x: analysisResults.delayTime, y: yMin},
+                        {x: analysisResults.delayTime, y: positionData[delayTimeIndex]}
+                    ],
+                    borderColor: 'rgba(255, 165, 0, 0.7)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false
+                });
+            }
+            
+            // Add rise time markers and line
+            const riseStartIndex = timeData.indexOf(analysisResults.riseTimeStart);
+            const riseEndIndex = timeData.indexOf(analysisResults.riseTimeEnd);
+            if (riseStartIndex >= 0 && riseEndIndex >= 0) {
+                // Start marker
+                const riseStartPoint = {
+                    x: analysisResults.riseTimeStart,
+                    y: positionData[riseStartIndex],
+                    markerType: 'riseStart',
+                    label: 'Rise Time Start (10%)',
+                    time: (analysisResults.riseTimeStart / 1000).toFixed(3) + ' s',
+                    value: positionData[riseStartIndex].toFixed(2) + '°'
+                };
+                chart.data.datasets[markerDatasetIndex].data.push(riseStartPoint);
+                analysisMarkers.markerPoints.push(riseStartPoint);
+                
+                // End marker
+                const riseEndPoint = {
+                    x: analysisResults.riseTimeEnd,
+                    y: positionData[riseEndIndex],
+                    markerType: 'riseEnd',
+                    label: 'Rise Time End (90%)',
+                    time: (analysisResults.riseTimeEnd / 1000).toFixed(3) + ' s',
+                    value: positionData[riseEndIndex].toFixed(2) + '°'
+                };
+                chart.data.datasets[markerDatasetIndex].data.push(riseEndPoint);
+                analysisMarkers.markerPoints.push(riseEndPoint);
+                
+                // Vertical reference line for rise start
+                chart.data.datasets.push({
+                    id: 'rise-start-line',
+                    label: 'Rise Start',
+                    data: [
+                        {x: analysisResults.riseTimeStart, y: yMin},
+                        {x: analysisResults.riseTimeStart, y: positionData[riseStartIndex]}
+                    ],
+                    borderColor: 'rgba(144, 238, 144, 0.7)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false
+                });
+                
+                // Vertical reference line for rise end
+                chart.data.datasets.push({
+                    id: 'rise-end-line',
+                    label: 'Rise End',
+                    data: [
+                        {x: analysisResults.riseTimeEnd, y: yMin},
+                        {x: analysisResults.riseTimeEnd, y: positionData[riseEndIndex]}
+                    ],
+                    borderColor: 'rgba(0, 128, 0, 0.7)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false
+                });
+            }
+            
+            // PERUBAHAN: Tambahkan peak time marker bahkan jika tidak ada overshoot
+            // Jika ada overshoot, gunakan nilai puncak sebenarnya
+            // Jika tidak ada overshoot, gunakan nilai steady state untuk marker
+            if (analysisResults.hasOvershoot && analysisResults.peakTime > 0) {
+                const peakIndex = timeData.indexOf(analysisResults.peakTime);
+                if (peakIndex >= 0) {
+                    const peakPoint = {
+                        x: analysisResults.peakTime,
+                        y: analysisResults.peakValue,
+                        markerType: 'peak',
+                        label: 'Peak Value',
+                        time: (analysisResults.peakTime / 1000).toFixed(3) + ' s',
+                        value: analysisResults.peakValue.toFixed(2) + '°'
+                    };
+                    chart.data.datasets[markerDatasetIndex].data.push(peakPoint);
+                    analysisMarkers.markerPoints.push(peakPoint);
+                    
+                    // Vertical reference line
+                    chart.data.datasets.push({
+                        id: 'peak-line',
+                        label: 'Peak Time',
+                        data: [
+                            {x: analysisResults.peakTime, y: yMin},
+                            {x: analysisResults.peakTime, y: analysisResults.peakValue}
+                        ],
+                        borderColor: 'rgba(148, 0, 211, 0.7)',
+                        borderWidth: 1.5,
+                        borderDash: [5, 5],
+                        pointRadius: 0,
+                        fill: false
+                    });
+                }
+            } else {
+                // Jika tidak ada overshoot, tambahkan marker untuk peak time dengan nilai 0
+                const steadyStateTimePoint = {
+                    x: 0, // Waktu 0
+                    y: analysisResults.steadyStateValue,
+                    markerType: 'peak',
+                    label: 'Peak Value (No Overshoot)',
+                    time: '0.000 s',
+                    value: analysisResults.steadyStateValue.toFixed(2) + '°'
+                };
+                chart.data.datasets[markerDatasetIndex].data.push(steadyStateTimePoint);
+                analysisMarkers.markerPoints.push(steadyStateTimePoint);
+            }
+            
+            // Add settling time marker and line
+            const settlingIndex = timeData.indexOf(analysisResults.settlingTime);
+            if (settlingIndex >= 0) {
+                const settlingPoint = {
+                    x: analysisResults.settlingTime,
+                    y: positionData[settlingIndex],
+                    markerType: 'settling',
+                    label: 'Settling Time',
+                    time: (analysisResults.settlingTime / 1000).toFixed(3) + ' s',
+                    value: positionData[settlingIndex].toFixed(2) + '°'
+                };
+                chart.data.datasets[markerDatasetIndex].data.push(settlingPoint);
+                analysisMarkers.markerPoints.push(settlingPoint);
+                
+                // Vertical reference line
+                chart.data.datasets.push({
+                    id: 'settling-line',
+                    label: 'Settling Time',
+                    data: [
+                        {x: analysisResults.settlingTime, y: yMin},
+                        {x: analysisResults.settlingTime, y: positionData[settlingIndex]}
+                    ],
+                    borderColor: 'rgba(30, 144, 255, 0.7)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false,
+                    borderColor: 'rgba(30, 144, 255, 0.7)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false
+                });
+            }
+            
+            // Set markers as visible
+            analysisMarkers.visible = true;
+            
+            // Update chart
+            chart.update();
+        }
+        
+        function removeAnalysisMarkers() {
+            // Remove all analysis datasets
+            chart.data.datasets = chart.data.datasets.filter(
+                ds => !ds.id || (ds.id !== 'markers' && 
+                                 ds.id !== 'steady-state-line' && 
+                                 ds.id !== 'tolerance-upper' && 
+                                 ds.id !== 'tolerance-lower' &&
+                                 ds.id !== 'delay-line' &&
+                                 ds.id !== 'rise-start-line' &&
+                                 ds.id !== 'rise-end-line' &&
+                                 ds.id !== 'peak-line' &&
+                                 ds.id !== 'settling-line')
+            );
+            
+            // Hide tooltip
+            document.getElementById('markerTooltip').style.display = 'none';
+            
+            // Clear active marker classes
+            document.querySelectorAll('.analysis-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Hide legend
+            document.getElementById('analysisLegend').style.display = 'none';
+            
+            analysisMarkers.visible = false;
+            analysisMarkers.activeMarker = null;
+            analysisMarkers.markerPoints = [];
+            
+            chart.update();
+        }
+        
+        function toggleAnalysisMarkers() {
+            if (analysisMarkers.visible) {
+                removeAnalysisMarkers();
+            } else {
+                addAnalysisMarkers();
+                updateAnalysisLegend();
+                document.getElementById('analysisLegend').style.display = 'flex';
+            }
+        }
+        
+        function updateAnalysisLegend() {
+            const legendContainer = document.getElementById('analysisLegend');
+            legendContainer.innerHTML = '';
+            
+            const legendData = [
+                { label: 'Delay Time (50%)', color: 'rgba(255, 165, 0, 0.7)' },
+                { label: 'Rise Time Start (10%)', color: 'rgba(144, 238, 144, 0.7)' },
+                { label: 'Rise Time End (90%)', color: 'rgba(0, 128, 0, 0.7)' }
+            ];
+            
+            // PERUBAHAN: Selalu tambahkan peak time ke legend, apakah ada overshoot atau tidak
+            legendData.push({ label: analysisResults.hasOvershoot ? 'Peak Value' : 'Peak Value (No Overshoot)', color: 'rgba(148, 0, 211, 0.7)' });
+            
+            legendData.push(
+                { label: 'Settling Time', color: 'rgba(30, 144, 255, 0.7)' },
+                { label: 'Steady State', color: 'rgba(0, 0, 128, 0.7)' },
+                { label: 'Tolerance Band (±2%)', color: 'rgba(173, 216, 230, 0.5)' }
+            );
+            
+            legendData.forEach(item => {
+                const legendItem = document.createElement('div');
+                legendItem.className = 'legend-item';
+                
+                const colorBox = document.createElement('div');
+                colorBox.className = 'legend-color';
+                colorBox.style.backgroundColor = item.color;
+                
+                const label = document.createElement('span');
+                label.className = 'legend-label';
+                label.textContent = item.label;
+                
+                legendItem.appendChild(colorBox);
+                legendItem.appendChild(label);
+                legendContainer.appendChild(legendItem);
+            });
+        }
+        
+        function highlightMarker(markerType) {
+            // PERUBAHAN: Hapus pemeriksaan kondisi untuk 'peak'
+            // Kita selalu menampilkan peak time, bahkan jika tidak ada overshoot
+            
+            if (!analysisMarkers.visible) {
+                addAnalysisMarkers();
+                updateAnalysisLegend();
+                document.getElementById('analysisLegend').style.display = 'flex';
+            }
+            
+            // Clear active marker classes
+            document.querySelectorAll('.analysis-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Add active class to clicked item
+            let activeItem;
+            switch(markerType) {
+                case 'delay':
+                    activeItem = document.getElementById('delayTimeItem');
+                    break;
+                case 'rise':
+                    activeItem = document.getElementById('riseTimeItem');
+                    break;
+                case 'peak':
+                    activeItem = document.getElementById('peakTimeItem');
+                    break;
+                case 'settling':
+                    activeItem = document.getElementById('settlingTimeItem');
+                    break;
+                case 'overshoot':
+                    activeItem = document.getElementById('maxOvershootItem');
+                    break;
+                case 'steady':
+                    activeItem = document.getElementById('steadyStateErrorItem');
+                    break;
+            }
+            
+            if (activeItem) {
+                activeItem.classList.add('active');
+            }
+            
+            // Find marker dataset index
+            const markerDatasetIndex = chart.data.datasets.findIndex(ds => ds.id === 'markers');
+            if (markerDatasetIndex === -1) return;
+            
+            // Reset all markers to default
+            chart.data.datasets[markerDatasetIndex].pointRadius = chart.data.datasets[markerDatasetIndex].data.map(() => 6);
+            chart.data.datasets[markerDatasetIndex].backgroundColor = chart.data.datasets[markerDatasetIndex].data.map(() => 'rgba(255, 99, 132, 0.7)');
+            chart.data.datasets[markerDatasetIndex].borderColor = chart.data.datasets[markerDatasetIndex].data.map(() => 'rgba(255, 99, 132, 1)');
+            
+            // Find matching marker points
+            let matchingMarkers = [];
+            if (markerType === 'rise') {
+                // For rise time, highlight both start and end points
+                matchingMarkers = analysisMarkers.markerPoints.filter(
+                    point => point.markerType === 'riseStart' || point.markerType === 'riseEnd'
+                );
+            } else if (markerType === 'overshoot') {
+                // For overshoot, highlight peak point if exists
+                if (analysisResults.hasOvershoot) {
+                    matchingMarkers = analysisMarkers.markerPoints.filter(point => point.markerType === 'peak');
+                }
+            } else if (markerType === 'steady') {
+                // For steady state error, highlight steady state
+                matchingMarkers = analysisMarkers.markerPoints.filter(
+                    point => point.markerType === 'steady'
+                );
+            } else {
+                // For other markers, find exact match
+                matchingMarkers = analysisMarkers.markerPoints.filter(point => point.markerType === markerType);
+            }
+            
+            // Highlight matching points
+            matchingMarkers.forEach(point => {
+                const pointIndex = chart.data.datasets[markerDatasetIndex].data.findIndex(
+                    p => p.x === point.x && p.y === point.y
+                );
+                
+                if (pointIndex !== -1) {
+                    // Make highlighted points larger and brighter
+                    chart.data.datasets[markerDatasetIndex].pointRadius[pointIndex] = 8;
+                    chart.data.datasets[markerDatasetIndex].backgroundColor[pointIndex] = 'rgba(255, 215, 0, 0.9)';
+                    chart.data.datasets[markerDatasetIndex].borderColor[pointIndex] = 'rgba(255, 165, 0, 1)';
+                    
+                    // Show tooltip for the first matching point
+                    if (matchingMarkers.indexOf(point) === 0) {
+                        showMarkerTooltip(point);
+                    }
+                }
+            });
+            
+            chart.update();
+        }
+        
+        function showMarkerTooltip(markerPoint) {
+            const tooltip = document.getElementById('markerTooltip');
+            tooltip.innerHTML = `<strong>${markerPoint.label}</strong><br>
+                                Time: ${markerPoint.time}<br>
+                                Value: ${markerPoint.value}`;
+            tooltip.style.display = 'block';
+            
+            // Position tooltip near the point
+            const canvas = document.getElementById('motorGraph');
+            const rect = canvas.getBoundingClientRect();
+            
+            // Convert chart coordinates to pixel coordinates
+            const xPixel = chart.scales.x.getPixelForValue(markerPoint.x);
+            const yPixel = chart.scales.y.getPixelForValue(markerPoint.y);
+            
+            tooltip.style.left = (rect.left + xPixel + 10) + 'px';
+            tooltip.style.top = (rect.top + yPixel - 40) + 'px';
+        }
+        
+        function handleChartClick(event) {
+            if (!analysisMarkers.visible) return;
+            
+            // Find marker dataset index
+            const markerDatasetIndex = chart.data.datasets.findIndex(ds => ds.id === 'markers');
+            if (markerDatasetIndex === -1) return;
+            
+            // Get clicked position
+            const canvasPosition = Chart.helpers.getRelativePosition(event, chart);
+            
+            // Find nearest point
+            let minDistance = Infinity;
+            let nearestPoint = null;
+            
+            chart.data.datasets[markerDatasetIndex].data.forEach(point => {
+                const xPixel = chart.scales.x.getPixelForValue(point.x);
+                const yPixel = chart.scales.y.getPixelForValue(point.y);
+                
+                const distance = Math.sqrt(
+                    Math.pow(canvasPosition.x - xPixel, 2) + 
+                    Math.pow(canvasPosition.y - yPixel, 2)
+                );
+                
+                if (distance < minDistance && distance < 30) { // Within 30 pixels
+                    minDistance = distance;
+                    nearestPoint = point;
+                }
+            });
+            
+            if (nearestPoint) {
+                // Highlight the corresponding analysis item
+                let markerType;
+                if (nearestPoint.markerType === 'riseStart' || nearestPoint.markerType === 'riseEnd') {
+                    markerType = 'rise';
+                } else if (nearestPoint.markerType === 'peak') {
+                    markerType = nearestPoint.markerType;
+                } else {
+                    markerType = nearestPoint.markerType;
+                }
+                
+                highlightMarker(markerType);
+            }
+        }
+        
+        window.addEventListener('load', () => {
+            initChart();
+            connectWebSocket();
+        });
+        
+        document.getElementById('setpoint').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendSetpoint();
+            }
+        });
+    </script>
+</body>
+</html>

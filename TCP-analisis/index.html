@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setpoint Control</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/1.2.1/chartjs-plugin-zoom.min.js"></script>
+    <style>
+        /* Previous styles remain unchanged */
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .graph-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+            margin-top: 20px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        .button-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .zoom-button {
+            flex: 1;
+        }
+        .transient-analysis {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .transient-analysis h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 8px;
+        }
+        .analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        .analysis-item {
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #4CAF50;
+        }
+        .analysis-item h4 {
+            margin: 0 0 5px 0;
+            color: #555;
+        }
+        .analysis-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Setpoint Control Panel</h2>
+        
+        <div id="setpointForm">
+            <div class="form-group">
+                <label for="setpoint">Setpoint (degrees):</label>
+                <input type="number" id="setpoint" placeholder="Enter setpoint value" required>
+            </div>
+            <button onclick="sendSetpoint()">Send Setpoint</button>
+        </div>
+
+        <div id="status"></div>
+
+        <div class="graph-container">
+            <canvas id="motorGraph"></canvas>
+        </div>
+        
+        <div class="button-container">
+            <button class="zoom-button" onclick="resetZoom()">Reset Zoom</button>
+            <button class="zoom-button" onclick="calculateTransient()">Analyze Transient Response</button>
+        </div>
+        
+        <div class="transient-analysis" id="transientAnalysis" style="display: none;">
+            <h3>Transient Response Analysis</h3>
+            <div class="analysis-grid">
+                <div class="analysis-item">
+                    <h4>Delay Time (ms)</h4>
+                    <div id="delayTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item">
+                    <h4>Rise Time (ms)</h4>
+                    <div id="riseTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item">
+                    <h4>Peak Time (ms)</h4>
+                    <div id="peakTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item">
+                    <h4>Settling Time (ms)</h4>
+                    <div id="settlingTime" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item">
+                    <h4>Maximum Overshoot (%)</h4>
+                    <div id="maxOvershoot" class="analysis-value">-</div>
+                </div>
+                <div class="analysis-item">
+                    <h4>Steady State Error</h4>
+                    <div id="steadyStateError" class="analysis-value">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let chart;
+        let startTime;
+        let responseStartTime = null;
+        let currentSetpoint = 0;
+        let reachedSetpoint = false;
+        let setpointReachedTime = null;
+        const maxDataPoints = 1000;  // Increased for better resolution
+        
+        // Data storage for transient analysis
+        let timeData = [];
+        let positionData = [];
+        let setpointData = [];
+        let setpointChangedTime = null;
+        
+        function initChart() {
+            const ctx = document.getElementById('motorGraph').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Actual Position',
+                            data: [],
+                            borderColor: 'rgb(75, 192, 192)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: false,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Setpoint',
+                            data: [],
+                            borderColor: 'rgb(255, 99, 132)',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            tension: 0,
+                            fill: false,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Time (milliseconds)',
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Position (degrees)',
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        }
+                    },
+                    animation: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20,
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += context.parsed.y.toFixed(3) + '°';
+                                    return label;
+                                },
+                                title: function(tooltipItems) {
+                                    return tooltipItems[0].parsed.x.toFixed(3) + ' ms';
+                                }
+                            }
+                        },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'xy'
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                mode: 'xy',
+                            }
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+            addData(0, 0, 0);
+        }
+
+        function resetZoom() {
+            chart.resetZoom();
+        }
+
+        function updateChartScale(setpoint) {
+            const maxY = Math.max(setpoint * 2, 360);
+            const minY = -10;
+            
+            chart.options.scales.y.max = maxY;
+            chart.options.scales.y.min = minY;
+            chart.update('none');
+        }
+
+        function addData(time, actualPosition, targetPosition) {
+            // Store data for transient analysis
+            timeData.push(time);
+            positionData.push(actualPosition);
+            setpointData.push(targetPosition);
+            
+            // First response detection - for delay time calculation
+            if (setpointChangedTime !== null && responseStartTime === null) {
+                const deadband = 0.2; // degrees
+                if (Math.abs(actualPosition - positionData[0]) > deadband) {
+                    responseStartTime = time;
+                }
+            }
+            
+            if (!reachedSetpoint) {
+                const error = Math.abs(actualPosition - targetPosition);
+                if (error < 0.5) {
+                    reachedSetpoint = true;
+                    setpointReachedTime = time;
+                }
+            }
+
+            chart.data.labels.push(time);
+            chart.data.datasets[0].data.push(actualPosition);
+            chart.data.datasets[1].data.push(targetPosition);
+
+            if (chart.data.labels.length > maxDataPoints) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+                chart.data.datasets[1].data.shift();
+            }
+
+            chart.update('none');
+
+            if (reachedSetpoint && (time - setpointReachedTime) >= 2000) {
+                showStatus('Target reached and stabilized', 'success');
+                // Auto-analyze when stable
+                calculateTransient();
+            }
+        }
+        
+        function connectWebSocket() {
+            ws = new WebSocket('ws://localhost:8765');
+            
+            ws.onopen = () => {
+                showStatus('Connected to server', 'success');
+                startTime = performance.now();
+                reachedSetpoint = false;
+                setpointReachedTime = null;
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const currentAngle = parseFloat(event.data) * 180 / Math.PI;
+                    const elapsedTime = performance.now() - startTime;
+                    addData(elapsedTime, currentAngle, currentSetpoint);
+                } catch (error) {
+                    console.error('Error processing data:', error);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                showStatus('Connection error! Please refresh the page.', 'error');
+            };
+            
+            ws.onclose = () => {
+                if (!reachedSetpoint) {
+                    showStatus('Connection lost. Reconnecting...', 'error');
+                    setTimeout(connectWebSocket, 3000);
+                }
+            };
+        }
+        
+        function sendSetpoint() {
+            const setpoint = parseFloat(document.getElementById('setpoint').value);
+            if (!isNaN(setpoint) && ws && ws.readyState === WebSocket.OPEN) {
+                // Reset response tracking
+                responseStartTime = null;
+                setpointChangedTime = performance.now() - startTime;
+                
+                // Reset data arrays for new transient analysis
+                timeData = [];
+                positionData = [];
+                setpointData = [];
+                
+                // Hide previous analysis results
+                document.getElementById('transientAnalysis').style.display = 'none';
+                
+                currentSetpoint = setpoint;
+                updateChartScale(setpoint);
+                ws.send(setpoint.toString());
+                showStatus('Setpoint sent successfully!', 'success');
+                
+                setTimeout(() => {
+                    document.getElementById('status').style.display = 'none';
+                }, 2000);
+            } else {
+                showStatus('Unable to send setpoint. Please check connection.', 'error');
+            }
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+            statusDiv.style.display = 'block';
+        }
+        
+        function calculateTransient() {
+            if (timeData.length < 5 || positionData.length < 5) {
+                showStatus('Not enough data for analysis', 'error');
+                return;
+            }
+            
+            const targetValue = currentSetpoint;
+            const initialValue = positionData[0];
+            
+            // Find the final steady-state value
+            const steadyStateValue = findSteadyStateValue(positionData, targetValue);
+            
+            // Calculate metrics
+            const delayTime = calculateDelayTime(timeData, positionData, initialValue, targetValue, steadyStateValue);
+            const riseTimeValues = calculateRiseTime(timeData, positionData, initialValue, steadyStateValue);
+            const peakInfo = findPeakValue(timeData, positionData, targetValue, steadyStateValue);
+            const settlingTime = calculateSettlingTime(timeData, positionData, targetValue, steadyStateValue);
+            const maxOvershoot = calculateMaxOvershoot(positionData, targetValue, initialValue, steadyStateValue);
+            const steadyStateError = Math.abs(targetValue - steadyStateValue).toFixed(3);
+            
+            // Display results
+            document.getElementById('delayTime').textContent = delayTime.toFixed(2) + ' ms';
+            document.getElementById('riseTime').textContent = riseTimeValues.riseTime.toFixed(2) + ' ms';
+            document.getElementById('peakTime').textContent = peakInfo.peakTime.toFixed(2) + ' ms';
+            document.getElementById('settlingTime').textContent = settlingTime.toFixed(2) + ' ms';
+            document.getElementById('maxOvershoot').textContent = maxOvershoot.toFixed(2) + '%';
+            document.getElementById('steadyStateError').textContent = steadyStateError + '°';
+            
+            // Show analysis container
+            document.getElementById('transientAnalysis').style.display = 'block';
+        }
+        
+        function findSteadyStateValue(positionData, targetValue) {
+            // Take the average of last 10% of data points as steady state
+            const numPoints = Math.max(5, Math.floor(positionData.length * 0.1));
+            const endSlice = positionData.slice(-numPoints);
+            return endSlice.reduce((sum, val) => sum + val, 0) / endSlice.length;
+        }
+        
+        function calculateDelayTime(timeData, positionData, initialValue, targetValue, steadyStateValue) {
+            if (responseStartTime === null) {
+                // If no response detected, estimate based on 10% response
+                const tenPercentResponse = initialValue + 0.1 * (steadyStateValue - initialValue);
+                for (let i = 0; i < positionData.length; i++) {
+                    if ((steadyStateValue > initialValue && positionData[i] >= tenPercentResponse) ||
+                        (steadyStateValue < initialValue && positionData[i] <= tenPercentResponse)) {
+                        return timeData[i];
+                    }
+                }
+                return 0;
+            }
+            return responseStartTime;
+        }
+        
+        function calculateRiseTime(timeData, positionData, initialValue, steadyStateValue) {
+            const range = steadyStateValue - initialValue;
+            const tenPercent = initialValue + 0.1 * range;
+            const ninetyPercent = initialValue + 0.9 * range;
+            
+            let startIndex = -1;
+            let endIndex = -1;
+            
+            // Find 10% and 90% points
+            for (let i = 0; i < positionData.length; i++) {
+                if (startIndex === -1 && 
+                    ((range > 0 && positionData[i] >= tenPercent) || 
+                     (range < 0 && positionData[i] <= tenPercent))) {
+                    startIndex = i;
+                }
+                
+                if (startIndex !== -1 && endIndex === -1 && 
+                    ((range > 0 && positionData[i] >= ninetyPercent) || 
+                     (range < 0 && positionData[i] <= ninetyPercent))) {
+                    endIndex = i;
+                    break;
+                }
+            }
+            
+            // If not found, return defaults
+            if (startIndex === -1 || endIndex === -1) {
+                return { startTime: 0, endTime: 0, riseTime: 0 };
+            }
+            
+            const startTime = timeData[startIndex];
+            const endTime = timeData[endIndex];
+            
+            return {
+                startTime: startTime,
+                endTime: endTime,
+                riseTime: endTime - startTime
+            };
+        }
+        
+        function findPeakValue(timeData, positionData, targetValue, steadyStateValue) {
+            let peakValue = positionData[0];
+            let peakIndex = 0;
+            
+            // Find the first peak after start of response
+            for (let i = 1; i < positionData.length; i++) {
+                if (Math.abs(positionData[i] - targetValue) > Math.abs(peakValue - targetValue)) {
+                    peakValue = positionData[i];
+                    peakIndex = i;
+                }
+                
+                // If we've reached steady state, stop looking
+                if (i > 20 && Math.abs(positionData[i] - steadyStateValue) < 0.05 * Math.abs(steadyStateValue - positionData[0])) {
+                    break;
+                }
+            }
+            
+            return {
+                peakValue: peakValue,
+                peakTime: timeData[peakIndex],
+                peakIndex: peakIndex
+            };
+        }
+        
+        function calculateSettlingTime(timeData, positionData, targetValue, steadyStateValue) {
+            const tolerance = 0.02; // 2% tolerance band
+            const toleranceBand = Math.abs(steadyStateValue - positionData[0]) * tolerance;
+            
+            // Find the last time the response leaves the tolerance band
+            let lastOutsideBandIndex = 0;
+            
+            for (let i = 0; i < positionData.length; i++) {
+                if (Math.abs(positionData[i] - steadyStateValue) > toleranceBand) {
+                    lastOutsideBandIndex = i;
+                }
+            }
+            
+            // If response never settles within band, return the last time point
+            if (lastOutsideBandIndex >= positionData.length - 1) {
+                return timeData[timeData.length - 1];
+            }
+            
+            return timeData[lastOutsideBandIndex + 1];
+        }
+        
+        function calculateMaxOvershoot(positionData, targetValue, initialValue, steadyStateValue) {
+            // Find the maximum deviation from target after crossing target
+            let maxOvershoot = 0;
+            let crossedTarget = false;
+            
+            for (let i = 0; i < positionData.length; i++) {
+                // Check if we've crossed the target
+                if (!crossedTarget) {
+                    if ((initialValue < targetValue && positionData[i] >= targetValue) ||
+                        (initialValue > targetValue && positionData[i] <= targetValue)) {
+                        crossedTarget = true;
+                    }
+                } else {
+                    // After crossing, look for maximum overshoot
+                    const overshoot = Math.abs(positionData[i] - targetValue);
+                    if (overshoot > maxOvershoot) {
+                        maxOvershoot = overshoot;
+                    }
+                }
+            }
+            
+            // Calculate percentage overshoot relative to step size
+            const stepSize = Math.abs(steadyStateValue - initialValue);
+            if (stepSize > 0) {
+                return (maxOvershoot / stepSize) * 100;
+            }
+            return 0;
+        }
+        
+        window.addEventListener('load', () => {
+            initChart();
+            connectWebSocket();
+        });
+        
+        document.getElementById('setpoint').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendSetpoint();
+            }
+        });
+    </script>
+</body>
+</html>
